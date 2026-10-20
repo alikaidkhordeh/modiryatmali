@@ -1,0 +1,3 @@
+# OPTIONAL and PAID: only if you want Claude API to categorize unknown messages.
+# Install with:  venv/bin/pip install -r requirements-ai.txt   and set ANTHROPIC_API_KEY in .env
+anthropic>=0.40
