@@ -4,6 +4,8 @@ import os
 import sqlite3
 from typing import Dict, List, Optional
 
+from .categories import CATEGORIES, EMOJI, UNKNOWN
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS expenses (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,6 +32,23 @@ CREATE TABLE IF NOT EXISTS people (
     word    TEXT NOT NULL,
     name    TEXT NOT NULL,
     PRIMARY KEY (user_id, word)
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id  INTEGER NOT NULL,
+    name     TEXT NOT NULL,
+    emoji    TEXT NOT NULL DEFAULT '🏷',
+    position INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (user_id, name)
+);
+
+-- when a built-in category is renamed: old built-in name -> the user's new name
+CREATE TABLE IF NOT EXISTS category_alias (
+    user_id INTEGER NOT NULL,
+    old     TEXT NOT NULL,
+    new     TEXT NOT NULL,
+    PRIMARY KEY (user_id, old)
 );
 
 CREATE TABLE IF NOT EXISTS meta (
@@ -139,6 +158,108 @@ class Database:
         return self.conn.execute(
             "SELECT * FROM expenses WHERE user_id=? ORDER BY id", (user_id,)
         ).fetchall()
+
+    # ---- categories (per user, editable) ---------------------------------
+    def categories(self, user_id: int) -> List[sqlite3.Row]:
+        rows = self.conn.execute(
+            "SELECT * FROM categories WHERE user_id=? ORDER BY position, id", (user_id,)
+        ).fetchall()
+        if not rows:  # first use: seed the defaults
+            for i, name in enumerate(CATEGORIES):
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO categories (user_id, name, emoji, position) VALUES (?,?,?,?)",
+                    (user_id, name, EMOJI.get(name, "🏷"), i),
+                )
+            self.conn.commit()
+            rows = self.conn.execute(
+                "SELECT * FROM categories WHERE user_id=? ORDER BY position, id", (user_id,)
+            ).fetchall()
+        return rows
+
+    def category_names(self, user_id: int) -> List[str]:
+        return [r["name"] for r in self.categories(user_id)]
+
+    def emoji_map(self, user_id: int) -> Dict[str, str]:
+        return {r["name"]: r["emoji"] for r in self.categories(user_id)}
+
+    def get_category(self, user_id: int, cid: int) -> Optional[sqlite3.Row]:
+        self.categories(user_id)
+        return self.conn.execute(
+            "SELECT * FROM categories WHERE id=? AND user_id=?", (cid, user_id)
+        ).fetchone()
+
+    def category_by_name(self, user_id: int, name: str) -> Optional[sqlite3.Row]:
+        self.categories(user_id)
+        return self.conn.execute(
+            "SELECT * FROM categories WHERE user_id=? AND name=?", (user_id, name)
+        ).fetchone()
+
+    def add_category(self, user_id: int, name: str, emoji: str) -> Optional[int]:
+        """Returns the new id, or None if the name already exists."""
+        if self.category_by_name(user_id, name):
+            return None
+        pos = self.conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM categories WHERE user_id=?", (user_id,)
+        ).fetchone()[0]
+        cur = self.conn.execute(
+            "INSERT INTO categories (user_id, name, emoji, position) VALUES (?,?,?,?)",
+            (user_id, name, emoji, pos),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def edit_category(self, user_id: int, cid: int, name: str, emoji: str) -> bool:
+        """Rename and/or change emoji. Old expenses and learned words follow the new name.
+        Returns False if another category already uses that name."""
+        cat = self.get_category(user_id, cid)
+        if not cat:
+            return False
+        old = cat["name"]
+        if name != old:
+            if self.category_by_name(user_id, name):
+                return False
+            if old == UNKNOWN:  # the fallback category keeps its name
+                name = old
+        self.conn.execute("UPDATE categories SET name=?, emoji=? WHERE id=?", (name, emoji, cid))
+        if name != old:
+            self.conn.execute(
+                "UPDATE expenses SET category=? WHERE user_id=? AND category=?", (name, user_id, old))
+            self.conn.execute(
+                "UPDATE keywords SET category=? WHERE user_id=? AND category=?", (name, user_id, old))
+            self.conn.execute(
+                "UPDATE category_alias SET new=? WHERE user_id=? AND new=?", (name, user_id, old))
+            self.conn.execute(
+                "INSERT INTO category_alias (user_id, old, new) VALUES (?,?,?) "
+                "ON CONFLICT(user_id, old) DO UPDATE SET new=excluded.new", (user_id, old, name))
+        self.conn.commit()
+        return True
+
+    def delete_category(self, user_id: int, cid: int) -> int:
+        """Delete a category; its expenses move to «سایر». Returns how many expenses moved (-1 = refused)."""
+        cat = self.get_category(user_id, cid)
+        if not cat or cat["name"] == UNKNOWN:
+            return -1
+        name = cat["name"]
+        if not self.category_by_name(user_id, UNKNOWN):
+            self.add_category(user_id, UNKNOWN, EMOJI.get(UNKNOWN, "📦"))
+        moved = self.conn.execute(
+            "UPDATE expenses SET category=? WHERE user_id=? AND category=?", (UNKNOWN, user_id, name)
+        ).rowcount
+        self.conn.execute("DELETE FROM keywords WHERE user_id=? AND category=?", (user_id, name))
+        self.conn.execute("DELETE FROM category_alias WHERE user_id=? AND new=?", (user_id, name))
+        self.conn.execute("DELETE FROM categories WHERE id=?", (cid,))
+        self.conn.commit()
+        return moved
+
+    def category_expense_count(self, user_id: int, name: str) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM expenses WHERE user_id=? AND category=?", (user_id, name)
+        ).fetchone()[0]
+
+    def aliases(self, user_id: int) -> Dict[str, str]:
+        rows = self.conn.execute(
+            "SELECT old, new FROM category_alias WHERE user_id=?", (user_id,)).fetchall()
+        return {r["old"]: r["new"] for r in rows}
 
     # ---- learned keywords / people ------------------------------------
     def set_keyword(self, user_id: int, word: str, category: str) -> None:

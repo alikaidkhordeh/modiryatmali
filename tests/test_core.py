@@ -130,6 +130,53 @@ def test_url_is_trimmed_when_too_long():
     assert len(url) <= 1900
 
 
+def test_category_management():
+    db, cat = make()
+    names = db.category_names(1)
+    assert "ماشین" in names and names[-1] == "سایر"
+    cid = db.add_category(1, "بازی", "🎮")
+    assert cid and db.add_category(1, "بازی", "🎮") is None
+    db.add_expense(1, 1000, "بازی", None, "گیم", "2026-10-21T10:00:00", "1405-07")
+    # rename moves expenses; the fallback category keeps its name
+    assert db.edit_category(1, cid, "گیم", "🕹")
+    assert db.month_expenses(1, "1405-07")[0]["category"] == "گیم"
+    other = db.category_by_name(1, "خوراک")["id"]
+    assert not db.edit_category(1, other, "گیم", "🍽")  # name taken
+    fallback = db.category_by_name(1, "سایر")["id"]
+    db.edit_category(1, fallback, "چیز دیگر", "📦")
+    assert db.category_by_name(1, "سایر") is not None
+    assert db.delete_category(1, fallback) == -1
+    # delete moves expenses to «سایر»
+    assert db.delete_category(1, cid) == 1
+    assert db.month_expenses(1, "1405-07")[0]["category"] == "سایر"
+    # built-in rename is followed by the keyword dictionary; deleted built-ins are not suggested
+    db.edit_category(1, db.category_by_name(1, "ماشین")["id"], "خودرو", "🚗")
+    assert classify(cat, "بنزین").category == "خودرو"
+    db.delete_category(1, db.category_by_name(1, "قبوض")["id"])
+    assert classify(cat, "قبض برق").resolved is False
+    # users are independent
+    assert "گیم" not in db.category_names(2) and "قبوض" in db.category_names(2)
+
+
+def test_payload_has_category_names():
+    db = Database(":memory:")
+    seed(db)
+    db.edit_category(1, db.category_by_name(1, "ماشین")["id"], "خودرو", "🚙")
+    # (expenses saved before the rename were moved by edit_category)
+    p = build_payload(db, 1, "1405-07", upto_day=29)
+    names = {c[0]: c for c in p["c"]}
+    assert names["خودرو"][3] == "🚙" and isinstance(names["خودرو"][4], int)
+    assert p["x"][0][0] == "قسط" and p["x"][0][4] == "💳"
+
+
+def test_parse_cat_input():
+    from bot.handlers import parse_cat_input
+
+    assert parse_cat_input("🎮 بازی") == ("🎮", "بازی")
+    assert parse_cat_input("بازی ویدیویی") == (None, "بازی ویدیویی")
+    assert parse_cat_input("🎮") == (None, "")
+
+
 def test_encode_roundtrip():
     import base64
 

@@ -5,9 +5,9 @@ Personal Persian Telegram expense bot. Python 3.9+, aiogram 3, SQLite, no paid s
 ## Layout
 ```
 bot/
-  main.py         entry point:  python -m bot.main   (polling, sets commands, starts scheduler)
+  main.py         entry point:  python -m bot.main   (polling, removes the slash-command menu, starts scheduler)
   config.py       Settings from .env (BOT_TOKEN, ALLOWED_USER_IDS, WEBAPP_URL, DB_PATH, optional ANTHROPIC_*)
-  handlers.py     all Telegram handlers + keyboards. Two routers: `main` (allowed users) and `guest` (shows their id)
+  handlers.py     all Telegram handlers + keyboards (bottom menu + inline buttons; callback data is documented at the top of the file). Two routers: `main` (allowed users) and `guest` (shows their id)
   parser.py       parse_amount(text) -> ParseResult(amount in toman, note). Pure function, well tested
   categories.py   CATEGORIES, EMOJI, KEYWORDS (priority order), DEFAULT_PEOPLE, STOPWORDS  <- edit data here
   categorizer.py  learned words -> keywords -> (optional Claude API) -> "سایر"; learn() from button corrections
@@ -29,14 +29,14 @@ tests/test_core.py  python tests/test_core.py   (or pytest) - covers everything 
 
 ## Common changes
 - **New keyword:** add it to the right list in `categories.py::KEYWORDS`.
-- **New category:** add to `CATEGORIES` (keep "سایر" last), `EMOJI`, `KEYWORDS`, then add the same entry to `CATS` and `COLORS` in `docs/index.html` (the link stores the category *index*; the DB stores names).
+- **Categories are per user and editable in the bot** (table `categories`; seeded from `categories.py::CATEGORIES/EMOJI` on first use). `categories.py::KEYWORDS` maps words to *default* category names; a renamed default is followed through table `category_alias`, a deleted one is skipped. "سایر" (`UNKNOWN`) is the fallback and cannot be deleted or renamed. To add a new *default* category: add it to `CATEGORIES`, `EMOJI`, `KEYWORDS` (only affects new users).
 - **Change the Mini App data:** edit `webapp.build_payload` and `docs/index.html` together (keys are documented at the top of `webapp.py`). The link is trimmed to <= 1900 chars.
 - **Claude API categorization (paid, off by default):** `pip install -r requirements-ai.txt` and set `ANTHROPIC_API_KEY` in `.env`.
 
 ## Status / known limits
-- Handlers were written against the aiogram 3 API but could not be run against real Telegram in the build sandbox (no PyPI access there). First real run is on the server: check `journalctl -u modiryatmali -f`.
-- The Mini App page was checked for JS errors with a stubbed DOM (demo and real payload), not visually in a browser.
+- The handler flows (add/edit/delete category, expense card buttons, reports, pending input) were exercised end to end with a small fake aiogram in the build sandbox (no PyPI access there), not yet with real Telegram. After changing handlers, try them by hand in Telegram and check `journalctl -u modiryatmali -f`.
+- The Mini App page was checked for JS errors with a stubbed DOM (demo and real payload); it needs GitHub Pages enabled to open inside Telegram.
 - The Mini App is read-only; edits happen in the bot (/last).
 
 ## Ideas for later
-Monthly budget per category with warnings, recurring expenses (monthly installments added automatically), search (`/find`), note editing, charts of previous months inside the Mini App, automatic DB backup to Telegram.
+Reordering categories, monthly budget per category with warnings, recurring expenses (monthly installments added automatically), search (`/find`), note editing, charts of previous months inside the Mini App, automatic DB backup to Telegram.

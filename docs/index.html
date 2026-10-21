@@ -124,10 +124,9 @@ svg{display:block;width:100%;overflow:visible}
 </main>
 
 <script>
-/* Keep CATS in the same order as bot/categories.py::CATEGORIES (the link stores the index). */
-const CATS=[["خوراک","🍽"],["ماشین","🚗"],["قسط","💳"],["خانه","🏠"],["قبوض","💡"],["حمل و نقل","🚕"],["سلامت","💊"],
-  ["زیبایی","💇"],["خرید","🛍"],["تفریح","🎬"],["سفر","✈️"],["هدیه","🎁"],["آموزش","📚"],["سایر","📦"]];
-const COLORS=["#ff7a59","#4cc9f0","#b388ff","#ffd166","#2ec4b6","#f78fb3","#ef476f","#06d6a0","#7bb7ff","#ff9f1c","#5ee7df","#ff6b9a","#9be564","#8d99ae"];
+/* Category names, emoji and color slot come inside the link, so categories edited in the bot just work. */
+const COLORS=["#ff7a59","#4cc9f0","#b388ff","#ffd166","#2ec4b6","#f78fb3","#ef476f","#06d6a0","#7bb7ff","#ff9f1c","#5ee7df","#ff6b9a","#9be564","#8d99ae","#c77dff","#80ed99"];
+const colorOf=i=>COLORS[(i||0)%COLORS.length];
 const MONTHS=["فروردین","اردیبهشت","خرداد","تیر","مرداد","شهریور","مهر","آبان","آذر","دی","بهمن","اسفند"];
 const FA="۰۱۲۳۴۵۶۷۸۹";
 
@@ -149,10 +148,10 @@ function demoData(){
   const d=[0,120e3,0,450e3,80e3,0,2.4e6,60e3,310e3,0,95e3,0,640e3,150e3,0,230e3,0,75e3,520e3,0,180e3,0,0,410e3,90e3,0,260e3,120e3,380e3];
   const t=d.reduce((a,b)=>a+b,0);
   return {m:"1405-07",t:t,n:41,p:6200000,
-    c:[[2,2400000,1],[0,1450000,17],[1,820000,6],[3,640000,2],[8,540000,5],[5,310000,6],[9,210000,3]],
+    c:[["قسط",2400000,1,"💳",2],["خوراک",1450000,17,"🍽",0],["ماشین",820000,6,"🚗",1],["خانه",640000,2,"🏠",3],["خرید",540000,5,"🛍",8],["حمل و نقل",310000,6,"🚕",5],["تفریح",210000,3,"🎬",9]],
     d:d,h:[["1405-02",4100000],["1405-03",5300000],["1405-04",3900000],["1405-05",6800000],["1405-06",6200000],["1405-07",t]],
     u:[["خانمم",1250000],["مامان",420000]],
-    x:[[2,2400000,"قسط ماشین",7],[8,540000,"کفش",13],[0,380000,"شام با خانمم",29],[3,350000,"اجاره انبار",19],[1,310000,"بنزین",9]]};
+    x:[["قسط",2400000,"قسط ماشین",7,"💳",2],["خرید",540000,"کفش",13,"🛍",8],["خوراک",380000,"شام با خانمم",29,"🍽",0],["خانه",350000,"اجاره انبار",19,"🏠",3],["ماشین",310000,"بنزین",9,"🚗",1]]};
 }
 
 function countUp(el,to){
@@ -190,8 +189,8 @@ function select(i,cats,total){
   if(selected<0){
     c.innerHTML='<div class="sub">مجموع</div><div class="big">'+short(total)+'</div><div class="sub">تومان</div>';
   }else{
-    const x=cats[selected],cat=CATS[x[0]]||CATS[CATS.length-1];
-    c.innerHTML='<div style="font-size:22px">'+cat[1]+'</div><div class="sub">'+esc(cat[0])+'</div><div class="big">'+short(x[1])+
+    const x=cats[selected];
+    c.innerHTML='<div style="font-size:22px">'+esc(x[3])+'</div><div class="sub">'+esc(x[0])+'</div><div class="big">'+short(x[1])+
       '</div><div class="sub">'+fa(Math.round(x[1]/total*100))+'٪ · '+fa(x[2])+' مورد</div>';
   }
   try{window.Telegram.WebApp.HapticFeedback.selectionChanged()}catch(e){}
@@ -203,7 +202,7 @@ function renderCategories(D){
   const R=70,C=2*Math.PI*R;let off=0,svg='<circle cx="100" cy="100" r="'+R+'" fill="none" stroke="var(--line)" stroke-width="22"/>';
   cats.forEach((c,i)=>{
     const frac=c[1]/total,len=Math.max(frac*C-(cats.length>1?3:0),.5);
-    svg+='<circle class="seg" data-i="'+i+'" data-len="'+len+'" cx="100" cy="100" r="'+R+'" fill="none" stroke="'+COLORS[c[0]]+
+    svg+='<circle class="seg" data-i="'+i+'" data-len="'+len+'" cx="100" cy="100" r="'+R+'" fill="none" stroke="'+colorOf(c[4])+
       '" stroke-width="22" style="stroke-dasharray:0 '+C+'" stroke-dashoffset="'+(-off)+'" transform="rotate(-90 100 100)"/>';
     off+=frac*C;
   });
@@ -215,11 +214,11 @@ function renderCategories(D){
     });
   }));
   $("legend").innerHTML=cats.map((c,i)=>{
-    const cat=CATS[c[0]]||CATS[CATS.length-1],pct=c[1]/total*100;
-    return '<div class="row" data-i="'+i+'"><span class="dot" style="background:'+COLORS[c[0]]+'"></span>'+
-      '<span class="name">'+cat[1]+" "+esc(cat[0])+'</span>'+
+    const pct=c[1]/total*100;
+    return '<div class="row" data-i="'+i+'"><span class="dot" style="background:'+colorOf(c[4])+'"></span>'+
+      '<span class="name">'+esc(c[3])+" "+esc(c[0])+'</span>'+
       '<span class="val">'+fmt(c[1])+'<span class="pct">'+fa(Math.round(pct))+'٪</span></span>'+
-      '<div class="track"><i style="background:'+COLORS[c[0]]+'" data-w="'+pct+'"></i></div></div>';
+      '<div class="track"><i style="background:'+colorOf(c[4])+'" data-w="'+pct+'"></i></div></div>';
   }).join("");
   setTimeout(()=>document.querySelectorAll(".track i").forEach(i=>i.style.width=i.dataset.w+"%"),150);
   document.querySelectorAll(".seg,.row").forEach(el=>el.addEventListener("click",()=>select(+el.dataset.i,cats,total)));
@@ -287,9 +286,9 @@ function renderTop(D){
   const x=D.x||[];
   if(!x.length){$("topCard").hidden=true;return}
   $("top").innerHTML=x.map(e=>{
-    const cat=CATS[e[0]]||CATS[CATS.length-1],col=COLORS[e[0]]||COLORS[COLORS.length-1];
-    return '<div class="exp"><div class="ico" style="background:'+col+'26">'+cat[1]+'</div>'+
-      '<div><div class="t">'+(esc(e[2])||esc(cat[0]))+'</div><div class="d">'+esc(cat[0])+' · روز '+fa(e[3])+'</div></div>'+
+    const col=colorOf(e[5]);
+    return '<div class="exp"><div class="ico" style="background:'+col+'26">'+esc(e[4])+'</div>'+
+      '<div><div class="t">'+(esc(e[2])||esc(e[0]))+'</div><div class="d">'+esc(e[0])+' · روز '+fa(e[3])+'</div></div>'+
       '<div class="a">'+fmt(e[1])+'</div></div>';
   }).join("");
 }

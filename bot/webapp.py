@@ -6,9 +6,9 @@ the bot packs a small summary of the month into the `d` query parameter
 
 Keep the keys below in sync with docs/index.html (see NOTES.md).
   m  month key "1405-07"            t  month total       n  number of expenses
-  p  previous month total           c  [[category index, total, count], ...] biggest first
+  p  previous month total           c  [[name, total, count, emoji, color slot], ...] biggest first
   d  [total of Jalali day 1, 2, ...]  h  [[month key, total], ...] last months
-  u  [[person, total], ...]         x  [[category index, amount, note, day], ...] biggest
+  u  [[person, total], ...]         x  [[name, amount, note, day, emoji, color slot], ...] biggest
 """
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ import datetime as dt
 import json
 from typing import Any, Dict, List, Optional
 
-from .categories import CATEGORIES
 from .db import Database
 from .jdate import prev_month_key, to_jalali
 
@@ -44,21 +43,25 @@ def build_payload(db: Database, user_id: int, key: str, upto_day: Optional[int] 
     hist_keys = _month_keys_back(key, 6)
     totals = db.month_totals(user_id, hist_keys + [prev_month_key(hist_keys[0])])
 
-    def cat_index(name: str) -> int:
-        return CATEGORIES.index(name) if name in CATEGORIES else len(CATEGORIES) - 1
+    cats = db.categories(user_id)
+    slot = {r["name"]: i for i, r in enumerate(cats)}
+    emoji = {r["name"]: r["emoji"] for r in cats}
+
+    def info(name: str):
+        return emoji.get(name, "🏷"), slot.get(name, len(slot))
 
     return {
         "m": key,
         "t": total,
         "n": len(rows),
         "p": totals.get(prev_month_key(key), 0),
-        "c": [[cat_index(c["category"]), c["total"], c["n"]] for c in db.month_by_category(user_id, key)],
+        "c": [[c["category"], c["total"], c["n"], *info(c["category"])] for c in db.month_by_category(user_id, key)],
         "d": [daily.get(i, 0) for i in range(1, length + 1)],
         "h": [[k, totals.get(k, 0)] for k in hist_keys],
         "u": [[p["person"], p["total"]] for p in db.month_by_person(user_id, key)[:6]],
         "x": [
-            [cat_index(e["category"]), e["amount"], (e["note"] or "")[:16],
-             to_jalali(dt.date.fromisoformat(e["spent_at"][:10]))[2]]
+            [e["category"], e["amount"], (e["note"] or "")[:16],
+             to_jalali(dt.date.fromisoformat(e["spent_at"][:10]))[2], *info(e["category"])]
             for e in db.month_top(user_id, key, 6)
         ],
     }

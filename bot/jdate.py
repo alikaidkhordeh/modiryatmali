@@ -69,6 +69,14 @@ def prev_month_key(key: str) -> str:
     return f"{jy:04d}-{jm:02d}"
 
 
+def next_month_key(key: str) -> str:
+    jy, jm = int(key[:4]), int(key[5:7])
+    jm += 1
+    if jm == 13:
+        jy, jm = jy + 1, 1
+    return f"{jy:04d}-{jm:02d}"
+
+
 def month_label(key: str) -> str:
     jy, jm = int(key[:4]), int(key[5:7])
     return f"{J_MONTHS[jm - 1]} {fa_digits(jy)}"

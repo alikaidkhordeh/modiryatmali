@@ -7,7 +7,6 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
 
 from .categorizer import Categorizer
 from .config import load_settings
@@ -15,18 +14,6 @@ from .db import Database
 from .handlers import build_routers
 from .scheduler import monthly_report_loop
 
-COMMANDS = [
-    ("today", "هزینه‌های امروز"),
-    ("month", "گزارش این ماه"),
-    ("lastmonth", "گزارش ماه قبل"),
-    ("app", "داشبورد با نمودار"),
-    ("top", "بزرگ‌ترین هزینه‌ها"),
-    ("person", "هزینه به تفکیک افراد"),
-    ("last", "۵ هزینهٔ آخر (ویرایش/حذف)"),
-    ("undo", "حذف آخرین هزینه"),
-    ("export", "خروجی CSV"),
-    ("help", "راهنما"),
-]
 
 
 async def main() -> None:
@@ -46,7 +33,7 @@ async def main() -> None:
     dp.include_router(main_router)
     dp.include_router(guest_router)
 
-    await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in COMMANDS])
+    await bot.delete_my_commands()  # no slash menu: the bottom keyboard is the interface
     scheduler_task = asyncio.create_task(monthly_report_loop(bot, settings, db))
     try:
         log.info("Bot started.")

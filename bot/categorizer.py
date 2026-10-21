@@ -79,9 +79,14 @@ class Categorizer:
         norm = normalize(text)
         toks = tokens(norm)
 
+        names = set(self.db.category_names(user_id))
+        aliases = self.db.aliases(user_id)
+
         learned = self.db.keywords(user_id)
         best = None
         for word, category in learned.items():
+            if category not in names:
+                continue
             if _text_has(norm, toks, word) and (best is None or len(word) > len(best[0])):
                 best = (word, category)
         if best:
@@ -94,7 +99,9 @@ class Categorizer:
                     if (" " in normalize(kw)) != want_phrase:
                         continue
                     if _text_has(norm, toks, kw):
-                        return Classification(category, None, "keyword")
+                        target = aliases.get(category, category)
+                        if target in names:  # skip categories the user deleted
+                            return Classification(target, None, "keyword")
         return None
 
     async def classify(self, user_id: int, text: str) -> Classification:
@@ -105,7 +112,7 @@ class Categorizer:
             return found
 
         if self._client is not None and text.strip():
-            ai = await self._ask_claude(text)
+            ai = await self._ask_claude(text, self.db.category_names(user_id))
             if ai:
                 return Classification(ai["category"], person or ai.get("person"), "ai")
 
@@ -128,12 +135,12 @@ class Categorizer:
         return learned
 
     # ---- optional Claude fallback --------------------------------------
-    async def _ask_claude(self, text: str) -> Optional[Dict[str, Optional[str]]]:
+    async def _ask_claude(self, text: str, allowed: List[str]) -> Optional[Dict[str, Optional[str]]]:
         system = (
             "You classify short Persian personal-expense notes (the amount is already removed). "
             "Reply with ONLY a JSON object: {\"category\": <one of the list>, \"person\": <string or null>}. "
             "person is a family member / friend mentioned in the note (e.g. خانمم, نامزدم, a first name) or null. "
-            "Categories: " + ", ".join(CATEGORIES)
+            "Categories: " + ", ".join(allowed)
         )
         try:
             resp = await self._client.messages.create(
@@ -142,13 +149,13 @@ class Categorizer:
                 system=system,
                 messages=[{"role": "user", "content": text}],
             )
-            return parse_ai_reply(resp.content[0].text)
+            return parse_ai_reply(resp.content[0].text, allowed)
         except Exception as exc:
             log.warning("Claude categorization failed: %s", exc)
             return None
 
 
-def parse_ai_reply(raw: str) -> Optional[Dict[str, Optional[str]]]:
+def parse_ai_reply(raw: str, allowed: Optional[List[str]] = None) -> Optional[Dict[str, Optional[str]]]:
     m = re.search(r"\{.*\}", raw, re.DOTALL)
     if not m:
         return None
@@ -157,7 +164,7 @@ def parse_ai_reply(raw: str) -> Optional[Dict[str, Optional[str]]]:
     except ValueError:
         return None
     category = data.get("category")
-    if category not in CATEGORIES or category == UNKNOWN:
+    if category not in (allowed if allowed is not None else CATEGORIES) or category == UNKNOWN:
         return None
     person = data.get("person")
     person = person.strip() if isinstance(person, str) and person.strip() else None

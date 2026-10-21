@@ -16,8 +16,8 @@ def esc(s: Optional[str]) -> str:
     return html.escape(s or "")
 
 
-def expense_line(e) -> str:
-    emoji = EMOJI.get(e["category"], "📦")
+def expense_line(e, emap=None) -> str:
+    emoji = (emap or EMOJI).get(e["category"], "🏷")
     text = esc(e["note"]) or esc(e["category"])
     line = f"{emoji} {fmt_amount(e['amount'])} — {text}"
     if e["person"]:
@@ -34,10 +34,11 @@ def day_report(db: Database, user_id: int, day: str, title: str = "امروز") 
     rows = db.expenses_on_day(user_id, day)
     if not rows:
         return f"📭 {title} هزینه‌ای ثبت نشده."
+    emap = db.emoji_map(user_id)
     total = sum(r["amount"] for r in rows)
     lines = [f"📅 <b>{title}</b>", f"💰 جمع: <b>{fmt_amount(total)}</b> تومان ({fa_digits(len(rows))} مورد)", ""]
     for r in rows[:MAX_LINES]:
-        lines.append(f"{fa_digits(r['spent_at'][11:16])}  {expense_line(r)}")
+        lines.append(f"{fa_digits(r['spent_at'][11:16])}  {expense_line(r, emap)}")
     if len(rows) > MAX_LINES:
         lines.append(f"… و {fa_digits(len(rows) - MAX_LINES)} مورد دیگر")
     return "\n".join(lines)
@@ -47,6 +48,7 @@ def month_report(db: Database, user_id: int, key: str, days_elapsed: Optional[in
     cats = db.month_by_category(user_id, key)
     if not cats:
         return f"📭 برای {month_label(key)} هزینه‌ای ثبت نشده."
+    emap = db.emoji_map(user_id)
     total = sum(c["total"] for c in cats)
     count = sum(c["n"] for c in cats)
 
@@ -59,7 +61,7 @@ def month_report(db: Database, user_id: int, key: str, days_elapsed: Optional[in
     lines += ["", "<b>به ترتیب بیشترین مصرف:</b>"]
     for i, c in enumerate(cats, 1):
         pct = c["total"] / total * 100
-        emoji = EMOJI.get(c["category"], "📦")
+        emoji = emap.get(c["category"], "🏷")
         lines.append(
             f"{fa_digits(i)}. {emoji} {esc(c['category'])} — <b>{fmt_amount(c['total'])}</b> "
             f"({fa_digits(round(pct))}٪)\n    {bar(pct)}"
@@ -74,7 +76,7 @@ def month_report(db: Database, user_id: int, key: str, days_elapsed: Optional[in
     top = db.month_top(user_id, key, 3)
     lines += ["", "<b>🔝 بزرگ‌ترین هزینه‌ها:</b>"]
     for e in top:
-        lines.append(f"• {expense_line(e)}")
+        lines.append(f"• {expense_line(e, emap)}")
     return "\n".join(lines)
 
 
@@ -82,9 +84,10 @@ def top_report(db: Database, user_id: int, key: str, n: int = 10) -> str:
     rows = db.month_top(user_id, key, n)
     if not rows:
         return f"📭 برای {month_label(key)} هزینه‌ای ثبت نشده."
+    emap = db.emoji_map(user_id)
     lines = [f"🔝 <b>بزرگ‌ترین هزینه‌های {month_label(key)}</b>", ""]
     for i, e in enumerate(rows, 1):
-        lines.append(f"{fa_digits(i)}. {expense_line(e)}")
+        lines.append(f"{fa_digits(i)}. {expense_line(e, emap)}")
     return "\n".join(lines)
 
 
@@ -106,8 +109,9 @@ def person_report(db: Database, user_id: int, key: str, name: Optional[str] = No
     ]
     if not rows:
         return f"📭 برای «{esc(name)}» در {month_label(key)} چیزی ثبت نشده."
+    emap = db.emoji_map(user_id)
     total = sum(r["amount"] for r in rows)
     lines = [f"👤 <b>{esc(name)} — {month_label(key)}</b>", f"💰 جمع: <b>{fmt_amount(total)}</b> تومان", ""]
     for r in rows[:MAX_LINES]:
-        lines.append(expense_line(r))
+        lines.append(expense_line(r, emap))
     return "\n".join(lines)
