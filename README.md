@@ -156,6 +156,11 @@ bash deploy/update.sh
 ---
 
 ## 🛠 عیب‌یابی
+- **بعد از آپدیت ربات عوض نشد:** این دستور پوشهٔ واقعی سرویس را پیدا می‌کند، از دیتابیس بکاپ می‌گیرد، کد را به آخرین نسخه می‌رساند (تغییرات دستی در `git stash` می‌ماند)، نسخه‌های اضافهٔ همین ربات را خاموش می‌کند، ریستارت می‌کند و گزارش می‌دهد:
+  ```bash
+  (curl -fsSL https://raw.githubusercontent.com/alikaidkhordeh/modiryatmali/main/deploy/fix_update.sh || wget -qO- https://raw.githubusercontent.com/alikaidkhordeh/modiryatmali/main/deploy/fix_update.sh) > /tmp/mm_fix.sh && sh /tmp/mm_fix.sh
+  ```
+  اگر گفت «نسخهٔ دیگری با همین توکن روشن است»، ربات جای دیگری (کامپیوتر یا سرور دیگر) هم اجرا می‌شود؛ خاموشش کن.
 - **ربات جواب نمی‌دهد:** `sudo systemctl status modiryatmali` و `sudo journalctl -u modiryatmali -n 50 --no-pager`.
 - **ربات می‌گوید «این ربات خصوصی است»:** شناسهٔ عددی‌ای که نشان می‌دهد را در `.env` جلوی `ALLOWED_USER_IDS` بگذار و ریستارت کن.
 - **مینی‌اپ ارور ۴۰۴ می‌دهد («There isn't a GitHub Pages site here»):** GitHub Pages روشن نیست. ریپو باید Public باشد و در Settings ← Pages شاخهٔ `main` و پوشهٔ `/docs` انتخاب شده باشد. چند دقیقه بعد از Save آدرس بالای همان صفحه فعال می‌شود.
