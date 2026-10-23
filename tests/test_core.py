@@ -177,6 +177,91 @@ def test_parse_cat_input():
     assert parse_cat_input("🎮") == (None, "")
 
 
+def test_jalali_back_and_month_length():
+    from bot.jdate import day_label, jalali_to_gregorian, month_length, weekday_index
+
+    for d in (dt.date(2026, 10, 21), dt.date(2026, 3, 20), dt.date(2026, 3, 21), dt.date(2025, 3, 20), dt.date(2030, 1, 1)):
+        assert jalali_to_gregorian(*gregorian_to_jalali(d.year, d.month, d.day)) == d
+    assert month_length("1405-01") == 31 and month_length("1405-07") == 30
+    assert month_length("1403-12") == 30  # leap year
+    assert month_length("1404-12") == 29
+    assert weekday_index(dt.date(2026, 10, 24)) == 0  # Saturday
+    assert day_label(dt.date(2026, 10, 21)) == "چهارشنبه ۲۹ مهر"
+
+
+def test_day_hints():
+    from bot.smart import split_day_hint
+
+    assert split_day_hint("دیروز بنزین ۵۰") == (1, "بنزین 50")
+    assert split_day_hint("شام دیشب با خانمم ۳۸۰") == (1, "شام با خانمم 380")
+    assert split_day_hint("پریروز نون ۳۰")[0] == 2
+    assert split_day_hint("۳ روز پیش کفش ۵۰۰") == (3, "کفش 500")
+    assert split_day_hint("بنزین ۵۰") == (0, "بنزین ۵۰")
+    assert split_day_hint("امروزی ۵۰")[0] == 0  # not a whole word
+    assert parse_amount(split_day_hint("۳ روز پیش کفش ۵۰۰")[1]).amount == 500_000
+
+
+def test_forecast_and_budget_thresholds():
+    from bot.smart import crossed, forecast, parse_recurring
+
+    assert forecast(1_000_000, 10, 30) == 3_000_000
+    assert forecast(1_000_000, 2, 30) is None and forecast(1_000_000, 30, 30) is None
+    assert crossed(700, 850, 1000) == 80
+    assert crossed(700, 1200, 1000) == 100
+    assert crossed(850, 900, 1000) is None
+    assert crossed(0, 10, 0) is None
+    assert parse_recurring("۵ قسط ماشین ۲ میلیون") == (5, "قسط ماشین 2 میلیون")
+    assert parse_recurring("روز ۱۵ اجاره ۸ میلیون") == (15, "اجاره 8 میلیون")
+    assert parse_recurring("قسط ماشین ۲ میلیون") is None
+    assert parse_recurring("۴۰ اجاره ۸ میلیون") is None
+    assert parse_recurring("۵ اجاره") is None
+
+
+def test_budgets_recurring_settings_backup():
+    db = Database(":memory:")
+    seed(db)
+    db.set_budget(1, "", 3_000_000)
+    db.set_budget(1, "خوراک", 300_000)
+    text = month_report(db, 1, "1405-07", 29)
+    assert "بودجه" in text and "۸۱٪" in text
+    from bot.reports import budget_report, category_month_report, search_report
+
+    b = budget_report(db, 1, "1405-07", 29)
+    assert "🔴" in b and "خوراک" in b  # 380k of 300k
+    # budgets follow a renamed category and disappear with a deleted one
+    cid = db.category_by_name(1, "خوراک")["id"]
+    db.edit_category(1, cid, "غذا", "🍽")
+    assert db.budgets(1).get("غذا") == 300_000
+    db.delete_category(1, cid)
+    assert "غذا" not in db.budgets(1)
+    assert "قسط" in category_month_report(db, 1, "1405-07", "قسط")
+    rows = db.search(1, "بنزین")
+    assert len(rows) == 1 and "بنزین" in search_report(rows, "بنزین", db.emoji_map(1))
+
+    rid = db.add_recurring(1, 5, "قسط ماشین 2 میلیون")
+    assert db.get_recurring(1, rid)["day"] == 5 and db.get_recurring(2, rid) is None
+    db.mark_recurring(rid, "1405-08")
+    assert db.recurring(1)[0]["last_month"] == "1405-08"
+    assert db.delete_recurring(1, rid) and not db.recurring(1)
+
+    assert db.setting(1, "monthly_report") and not db.setting(1, "night_reminder")
+    assert db.toggle_setting(1, "night_reminder") and db.setting(1, "night_reminder")
+    assert db.backup_bytes().startswith(b"SQLite format 3")
+
+
+def test_payload_new_keys():
+    db = Database(":memory:")
+    seed(db)
+    db.set_budget(1, "", 5_000_000)
+    p = build_payload(db, 1, "1405-07", upto_day=29, made_at=dt.datetime(2026, 10, 21, 14, 5))
+    assert p["l"] == 30 and p["e"] == 29 and p["b"] == 5_000_000
+    assert p["f"] == round(2_430_000 / 29 * 30)
+    assert sum(p["w"]) == 2_430_000 and p["s"] == "1405-07-29 14:05"
+    assert len(p["c"][0]) == 6
+    past = build_payload(db, 1, "1405-07")  # finished month: full length, no forecast
+    assert len(past["d"]) == 30 and past["f"] == 0
+
+
 def test_encode_roundtrip():
     import base64
 

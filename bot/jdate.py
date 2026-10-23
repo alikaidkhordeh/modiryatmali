@@ -85,3 +85,56 @@ def month_label(key: str) -> str:
 def is_last_day_of_month(d: _dt.date) -> bool:
     tomorrow = d + _dt.timedelta(days=1)
     return to_jalali(tomorrow)[1] != to_jalali(d)[1]
+
+
+def jalali_to_gregorian(jy: int, jm: int, jd: int) -> _dt.date:
+    jy += 1595
+    days = -355668 + (365 * jy) + ((jy // 33) * 8) + (((jy % 33) + 3) // 4) + jd
+    days += (jm - 1) * 31 if jm < 7 else ((jm - 7) * 30) + 186
+    gy = 400 * (days // 146097)
+    days %= 146097
+    if days > 36524:
+        days -= 1
+        gy += 100 * (days // 36524)
+        days %= 36524
+        if days >= 365:
+            days += 1
+    gy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        gy += (days - 1) // 365
+        days = (days - 1) % 365
+    gd = days + 1
+    leap = (gy % 4 == 0 and gy % 100 != 0) or (gy % 400 == 0)
+    month_days = [0, 31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    gm = 1
+    while gm <= 12 and gd > month_days[gm]:
+        gd -= month_days[gm]
+        gm += 1
+    return _dt.date(gy, gm, gd)
+
+
+def month_length(key: str) -> int:
+    """Number of days in a Jalali month (29/30 for Esfand, depending on the leap year)."""
+    jy, jm = int(key[:4]), int(key[5:7])
+    if jm <= 6:
+        return 31
+    if jm <= 11:
+        return 30
+    first = jalali_to_gregorian(jy, 12, 1)
+    nxt = jalali_to_gregorian(jy + 1, 1, 1)
+    return (nxt - first).days
+
+
+WEEKDAYS = ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه"]
+
+
+def weekday_index(d) -> int:
+    """0 = Saturday … 6 = Friday (the Persian week)."""
+    return (d.weekday() + 2) % 7
+
+
+def day_label(d) -> str:
+    """'سه‌شنبه ۲۹ مهر'"""
+    _, jm, jd = to_jalali(d)
+    return f"{WEEKDAYS[weekday_index(d)]} {fa_digits(jd)} {J_MONTHS[jm - 1]}"

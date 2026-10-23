@@ -23,6 +23,7 @@ class Settings:
     db_path: str
     tz: ZoneInfo
     webapp_url: str  # base URL of the mini-app page (docs/index.html on GitHub Pages); "" = off
+    admin_id: Optional[int] = None  # first id of ALLOWED_USER_IDS: gets database backups
 
 
 def load_settings() -> Settings:
@@ -31,9 +32,8 @@ def load_settings() -> Settings:
         raise SystemExit("BOT_TOKEN در فایل .env خالی است. توکن را از @BotFather بگیر و در .env بگذار.")
 
     raw_ids = os.getenv("ALLOWED_USER_IDS", "")
-    ids = frozenset(
-        int(x) for x in re.split(r"[,\s]+", raw_ids) if x.strip().lstrip("-").isdigit()
-    )
+    ordered = [int(x) for x in re.split(r"[,\s]+", raw_ids) if x.strip().lstrip("-").isdigit()]
+    ids = frozenset(ordered)
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip() or None
     model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-haiku-5-5"
@@ -48,4 +48,5 @@ def load_settings() -> Settings:
         db_path=db_path,
         tz=tz,
         webapp_url=os.getenv("WEBAPP_URL", "").strip(),
+        admin_id=ordered[0] if ordered else None,
     )

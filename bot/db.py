@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import tempfile
 from typing import Dict, List, Optional
 
 from .categories import CATEGORIES, EMOJI, UNKNOWN
@@ -55,7 +56,39 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- monthly budgets; category '' = the whole month
+CREATE TABLE IF NOT EXISTS budgets (
+    user_id  INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    amount   INTEGER NOT NULL,
+    PRIMARY KEY (user_id, category)
+);
+
+-- monthly reminders (installments, subscriptions): text is a normal expense line
+CREATE TABLE IF NOT EXISTS recurring (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    day        INTEGER NOT NULL,
+    text       TEXT NOT NULL,
+    last_month TEXT NOT NULL DEFAULT ''   -- month key of the last reminder
+);
+
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER NOT NULL,
+    key     TEXT NOT NULL,
+    value   TEXT NOT NULL,
+    PRIMARY KEY (user_id, key)
+);
 """
+
+# per-user switches shown in the panel (key -> default)
+SETTINGS_DEFAULTS = {
+    "monthly_report": "1",   # report on the last evening of the month
+    "budget_alerts": "1",    # warn at 80% / 100% of a budget
+    "weekly_backup": "1",    # Friday night database backup (admin only)
+    "night_reminder": "0",   # 22:00 nudge when nothing was recorded today
+}
 
 
 class Database:
@@ -97,6 +130,61 @@ class Database:
             "UPDATE expenses SET amount=? WHERE id=? AND user_id=?", (amount, exp_id, user_id)
         )
         self.conn.commit()
+
+    def update_note(self, user_id: int, exp_id: int, note: str, person: Optional[str]) -> None:
+        self.conn.execute(
+            "UPDATE expenses SET note=?, person=? WHERE id=? AND user_id=?", (note, person, exp_id, user_id)
+        )
+        self.conn.commit()
+
+    def update_date(self, user_id: int, exp_id: int, spent_at: str, j_month: str) -> None:
+        self.conn.execute(
+            "UPDATE expenses SET spent_at=?, j_month=? WHERE id=? AND user_id=?",
+            (spent_at, j_month, exp_id, user_id),
+        )
+        self.conn.commit()
+
+    def search(self, user_id: int, query: str, limit: int = 15) -> List[sqlite3.Row]:
+        like = f"%{query}%"
+        return self.conn.execute(
+            "SELECT * FROM expenses WHERE user_id=? AND (note LIKE ? OR category LIKE ? OR person LIKE ?) "
+            "ORDER BY id DESC LIMIT ?",
+            (user_id, like, like, like, limit),
+        ).fetchall()
+
+    def find_recent_same(self, user_id: int, amount: int, note: str, since: str, exclude_id: int) -> bool:
+        """Was the same amount + note already saved after `since`? (accidental double send)"""
+        row = self.conn.execute(
+            "SELECT 1 FROM expenses WHERE user_id=? AND amount=? AND note=? AND spent_at>=? AND id<>? LIMIT 1",
+            (user_id, amount, note, since, exclude_id),
+        ).fetchone()
+        return row is not None
+
+    def month_total(self, user_id: int, j_month: str, category: Optional[str] = None) -> int:
+        if category is None:
+            row = self.conn.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE user_id=? AND j_month=?", (user_id, j_month)
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE user_id=? AND j_month=? AND category=?",
+                (user_id, j_month, category),
+            ).fetchone()
+        return int(row[0])
+
+    def month_category_expenses(self, user_id: int, j_month: str, category: str) -> List[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM expenses WHERE user_id=? AND j_month=? AND category=? ORDER BY amount DESC",
+            (user_id, j_month, category),
+        ).fetchall()
+
+    def stats(self, user_id: int) -> Dict[str, object]:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total, MIN(spent_at) AS first, "
+            "COUNT(DISTINCT j_month) AS months FROM expenses WHERE user_id=?", (user_id,)
+        ).fetchone()
+        words = self.conn.execute("SELECT COUNT(*) FROM keywords WHERE user_id=?", (user_id,)).fetchone()[0]
+        return {"n": row["n"], "total": row["total"], "first": row["first"], "months": row["months"], "words": words}
 
     def delete_expense(self, user_id: int, exp_id: int) -> bool:
         cur = self.conn.execute(
@@ -227,6 +315,8 @@ class Database:
             self.conn.execute(
                 "UPDATE keywords SET category=? WHERE user_id=? AND category=?", (name, user_id, old))
             self.conn.execute(
+                "UPDATE budgets SET category=? WHERE user_id=? AND category=?", (name, user_id, old))
+            self.conn.execute(
                 "UPDATE category_alias SET new=? WHERE user_id=? AND new=?", (name, user_id, old))
             self.conn.execute(
                 "INSERT INTO category_alias (user_id, old, new) VALUES (?,?,?) "
@@ -246,10 +336,23 @@ class Database:
             "UPDATE expenses SET category=? WHERE user_id=? AND category=?", (UNKNOWN, user_id, name)
         ).rowcount
         self.conn.execute("DELETE FROM keywords WHERE user_id=? AND category=?", (user_id, name))
+        self.conn.execute("DELETE FROM budgets WHERE user_id=? AND category=?", (user_id, name))
         self.conn.execute("DELETE FROM category_alias WHERE user_id=? AND new=?", (user_id, name))
         self.conn.execute("DELETE FROM categories WHERE id=?", (cid,))
         self.conn.commit()
         return moved
+
+    def move_category(self, user_id: int, cid: int, step: int) -> bool:
+        """Move a category one place up (-1) or down (+1) in the list."""
+        cats = list(self.categories(user_id))
+        idx = next((i for i, c in enumerate(cats) if c["id"] == cid), None)
+        if idx is None or not 0 <= idx + step < len(cats):
+            return False
+        cats[idx], cats[idx + step] = cats[idx + step], cats[idx]
+        for pos, c in enumerate(cats):
+            self.conn.execute("UPDATE categories SET position=? WHERE id=?", (pos, c["id"]))
+        self.conn.commit()
+        return True
 
     def category_expense_count(self, user_id: int, name: str) -> int:
         return self.conn.execute(
@@ -289,6 +392,89 @@ class Database:
             "SELECT word, name FROM people WHERE user_id=?", (user_id,)
         ).fetchall()
         return {r["word"]: r["name"] for r in rows}
+
+    def delete_keyword(self, user_id: int, word: str) -> bool:
+        cur = self.conn.execute("DELETE FROM keywords WHERE user_id=? AND word=?", (user_id, word))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def delete_person(self, user_id: int, word: str) -> bool:
+        cur = self.conn.execute("DELETE FROM people WHERE user_id=? AND word=?", (user_id, word))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    # ---- budgets ---------------------------------------------------------
+    def set_budget(self, user_id: int, category: str, amount: int) -> None:
+        """category '' = budget for the whole month."""
+        self.conn.execute(
+            "INSERT INTO budgets (user_id, category, amount) VALUES (?,?,?) "
+            "ON CONFLICT(user_id, category) DO UPDATE SET amount=excluded.amount",
+            (user_id, category, amount),
+        )
+        self.conn.commit()
+
+    def delete_budget(self, user_id: int, category: str) -> None:
+        self.conn.execute("DELETE FROM budgets WHERE user_id=? AND category=?", (user_id, category))
+        self.conn.commit()
+
+    def budgets(self, user_id: int) -> Dict[str, int]:
+        rows = self.conn.execute("SELECT category, amount FROM budgets WHERE user_id=?", (user_id,)).fetchall()
+        return {r["category"]: r["amount"] for r in rows}
+
+    # ---- recurring reminders ------------------------------------------
+    def add_recurring(self, user_id: int, day: int, text: str) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO recurring (user_id, day, text) VALUES (?,?,?)", (user_id, day, text))
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def recurring(self, user_id: int) -> List[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM recurring WHERE user_id=? ORDER BY day, id", (user_id,)).fetchall()
+
+    def get_recurring(self, user_id: int, rid: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM recurring WHERE id=? AND user_id=?", (rid, user_id)).fetchone()
+
+    def delete_recurring(self, user_id: int, rid: int) -> bool:
+        cur = self.conn.execute("DELETE FROM recurring WHERE id=? AND user_id=?", (rid, user_id))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def mark_recurring(self, rid: int, j_month: str) -> None:
+        self.conn.execute("UPDATE recurring SET last_month=? WHERE id=?", (j_month, rid))
+        self.conn.commit()
+
+    # ---- per-user settings --------------------------------------------
+    def setting(self, user_id: int, key: str) -> bool:
+        row = self.conn.execute(
+            "SELECT value FROM user_settings WHERE user_id=? AND key=?", (user_id, key)).fetchone()
+        return (row["value"] if row else SETTINGS_DEFAULTS.get(key, "0")) == "1"
+
+    def toggle_setting(self, user_id: int, key: str) -> bool:
+        value = not self.setting(user_id, key)
+        self.conn.execute(
+            "INSERT INTO user_settings (user_id, key, value) VALUES (?,?,?) "
+            "ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value",
+            (user_id, key, "1" if value else "0"),
+        )
+        self.conn.commit()
+        return value
+
+    # ---- backup ----------------------------------------------------------
+    def backup_bytes(self) -> bytes:
+        """A consistent copy of the whole database file (safe while the bot is running)."""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            dest = sqlite3.connect(path)
+            with dest:
+                self.conn.backup(dest)
+            dest.close()
+            with open(path, "rb") as f:
+                return f.read()
+        finally:
+            os.remove(path)
 
     # ---- meta ------------------------------------------------------------
     def meta_get(self, key: str) -> Optional[str]:
